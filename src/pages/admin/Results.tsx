@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { BookOpen, ClipboardCheck, Eye, LineChart, Plus, Save, Send, Trash2 } from 'lucide-react';
+import { BookOpen, ClipboardCheck, Edit, Eye, LineChart, Plus, Save, Send, Trash2 } from 'lucide-react';
 
 type ViewMode = 'entry' | 'overview' | 'performance' | 'subjects';
 
@@ -15,6 +15,7 @@ export default function ResultManagement() {
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedExam, setSelectedExam] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
+  const [classForm, setClassForm] = useState({ id: 0, name: '' });
   const [subjectForm, setSubjectForm] = useState({ id: 0, name: '' });
   const [examForm, setExamForm] = useState({ name: '', date: '' });
   const [draftMarks, setDraftMarks] = useState<Record<number, string>>({});
@@ -35,7 +36,10 @@ export default function ResultManagement() {
   }, []);
 
   useEffect(() => {
-    if (selectedClass) fetchSubjects(selectedClass);
+    if (selectedClass) {
+      setSubjectForm({ id: 0, name: '' });
+      fetchSubjects(selectedClass);
+    }
   }, [selectedClass]);
 
   useEffect(() => {
@@ -141,6 +145,78 @@ export default function ResultManagement() {
     fetchPerformance(selectedClass, selectedExam, selectedSubject);
   };
 
+  const saveAllMarks = async () => {
+    setError(null);
+    setMessage(null);
+
+    const marks = entries
+      .map((entry) => ({ student_id: entry.student_id, marks: draftMarks[entry.student_id] }))
+      .filter((entry) => entry.marks !== '' && entry.marks !== undefined)
+      .map((entry) => ({ student_id: entry.student_id, marks: Number(entry.marks) }));
+
+    if (!marks.length) {
+      setError('Enter at least one mark before saving all.');
+      return;
+    }
+
+    if (marks.some((entry) => Number.isNaN(entry.marks) || entry.marks < 0 || entry.marks > 100)) {
+      setError('All entered marks must be between 0 and 100.');
+      return;
+    }
+
+    const res = await fetch('/api/marks/bulk', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        class_id: Number(selectedClass),
+        subject_id: Number(selectedSubject),
+        exam_id: Number(selectedExam),
+        marks,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || 'Failed to save marks.');
+      return;
+    }
+    setMessage(`Saved ${data.count} mark${data.count === 1 ? '' : 's'} and recalculated results.`);
+    fetchEntries(selectedClass, selectedExam, selectedSubject);
+    fetchOverview(selectedClass, selectedExam);
+    fetchPerformance(selectedClass, selectedExam, selectedSubject);
+  };
+
+  const submitClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const url = classForm.id ? `/api/classes/${classForm.id}` : '/api/classes';
+    const method = classForm.id ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers,
+      body: JSON.stringify({ name: classForm.name }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || 'Failed to save class.');
+      return;
+    }
+    setClassForm({ id: 0, name: '' });
+    setMessage('Class saved successfully.');
+    fetchBootstrap();
+  };
+
+  const deleteClass = async (id: number) => {
+    if (!confirm('Delete this class and its subjects, result records, fee structure, and attendance records?')) return;
+    const res = await fetch(`/api/classes/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || 'Failed to delete class.');
+      return;
+    }
+    setClassForm({ id: 0, name: '' });
+    setMessage('Class deleted successfully.');
+    fetchBootstrap();
+  };
+
   const submitSubject = async (e: React.FormEvent) => {
     e.preventDefault();
     const url = subjectForm.id ? `/api/subjects/${subjectForm.id}` : '/api/subjects';
@@ -210,7 +286,7 @@ export default function ResultManagement() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Result Management</h1>
-          <p className="text-sm text-gray-500">Manage subjects, submit marks, review performance, and publish final results.</p>
+          <p className="text-sm text-gray-500">Manage classes and subjects, submit marks, review performance, and publish final results.</p>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <select className="rounded-lg border border-gray-300 p-2" value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)}>
@@ -235,7 +311,7 @@ export default function ResultManagement() {
             {item === 'entry' && <span className="inline-flex items-center gap-2"><ClipboardCheck size={16} /> Mark Entry</span>}
             {item === 'overview' && <span className="inline-flex items-center gap-2"><Eye size={16} /> Results</span>}
             {item === 'performance' && <span className="inline-flex items-center gap-2"><LineChart size={16} /> Performance</span>}
-            {item === 'subjects' && <span className="inline-flex items-center gap-2"><BookOpen size={16} /> Subjects</span>}
+            {item === 'subjects' && <span className="inline-flex items-center gap-2"><BookOpen size={16} /> Classes & Subjects</span>}
           </button>
         ))}
       </div>
@@ -246,10 +322,30 @@ export default function ResultManagement() {
       {view === 'subjects' && user?.role === 'admin' && (
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="rounded-xl bg-white p-6 shadow-sm">
+            <h2 className="mb-4 text-lg font-semibold text-gray-900">Classes</h2>
+            <form onSubmit={submitClass} className="mb-6 flex flex-col gap-3 sm:flex-row">
+              <input className="flex-1 rounded-lg border border-gray-300 p-2" placeholder="Class name" value={classForm.name} onChange={(e) => setClassForm((prev) => ({ ...prev, name: e.target.value }))} required />
+              <button className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white"><Plus size={16} />{classForm.id ? 'Update' : 'Add'}</button>
+            </form>
+            <div className="space-y-3">
+              {classes.map((item) => (
+                <div key={item.id} className={`flex items-center justify-between rounded-lg border px-4 py-3 ${String(item.id) === selectedClass ? 'border-indigo-200 bg-indigo-50' : 'border-gray-200'}`}>
+                  <button className="text-left font-medium text-gray-800" onClick={() => setSelectedClass(String(item.id))}>{item.name}</button>
+                  <div className="flex items-center gap-3">
+                    <button className="text-indigo-600" title="Edit class" onClick={() => setClassForm({ id: item.id, name: item.name })}><Edit size={16} /></button>
+                    <button className="text-red-600" title="Delete class" onClick={() => deleteClass(item.id)}><Trash2 size={16} /></button>
+                  </div>
+                </div>
+              ))}
+              {classes.length === 0 && <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-500">No classes found.</p>}
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-white p-6 shadow-sm">
             <h2 className="mb-4 text-lg font-semibold text-gray-900">Class Subjects</h2>
-            <form onSubmit={submitSubject} className="mb-6 flex gap-3">
+            <form onSubmit={submitSubject} className="mb-6 flex flex-col gap-3 sm:flex-row">
               <input className="flex-1 rounded-lg border border-gray-300 p-2" placeholder="Subject name" value={subjectForm.name} onChange={(e) => setSubjectForm((prev) => ({ ...prev, name: e.target.value }))} required />
-              <button className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white"><Plus size={16} />{subjectForm.id ? 'Update' : 'Add'}</button>
+              <button className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white"><Plus size={16} />{subjectForm.id ? 'Update' : 'Add'}</button>
             </form>
             <div className="space-y-3">
               {subjects.map((subject) => (
@@ -261,10 +357,11 @@ export default function ResultManagement() {
                   </div>
                 </div>
               ))}
+              {subjects.length === 0 && <p className="rounded-lg bg-gray-50 p-4 text-sm text-gray-500">No subjects assigned to this class.</p>}
             </div>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-6 lg:col-span-2">
             <div className="rounded-xl bg-white p-6 shadow-sm">
               <div className="mb-4 flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-gray-900">Publication Control</h2>
@@ -329,6 +426,15 @@ export default function ResultManagement() {
               </tbody>
             </table>
           </div>
+          {entries.length > 0 && (
+            <div className="flex flex-col gap-3 border-t border-gray-200 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-gray-500">Bulk save sends all entered marks for this class, exam, and subject in one request.</p>
+              <button className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 px-5 py-2 text-sm font-medium text-white disabled:bg-gray-300" onClick={saveAllMarks} disabled={publicationState === 'published'}>
+                <Save size={16} />
+                Save All Marks
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -337,7 +443,7 @@ export default function ResultManagement() {
           <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Class Result Sheet</h2>
-              <p className="text-sm text-gray-500">{resultView.class?.name} • {resultView.exam?.name}</p>
+              <p className="text-sm text-gray-500">{resultView.class?.name} - {resultView.exam?.name}</p>
             </div>
             <span className={`rounded-full px-3 py-1 text-xs font-semibold ${publicationState === 'published' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>{publicationState}</span>
           </div>

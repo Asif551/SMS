@@ -178,7 +178,7 @@ export default function StudentDashboard() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subject</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                 </tr>
               </thead>
@@ -186,7 +186,7 @@ export default function StudentDashboard() {
                 {attendanceHistory.slice(0, 10).map((a) => (
                   <tr key={a.id}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{format(new Date(a.date), 'MMM dd, yyyy')}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{a.period_name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{a.subject_name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${a.status === 'Present' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                         {a.status}

@@ -118,6 +118,38 @@ const validateEntities = (db: any, studentId: number, classId: number, subjectId
   if (subject.class_id !== classId) throw new Error('Subject is not assigned to the selected class.');
 };
 
+const validateClassAndSubject = (db: any, classId: number, subjectId: number) => {
+  const classInfo = db.prepare('SELECT id FROM classes WHERE id = ?').get(classId);
+  if (!classInfo) throw new Error('Class not found.');
+
+  const subject = db.prepare('SELECT id, class_id FROM subjects WHERE id = ?').get(subjectId) as any;
+  if (!subject) throw new Error('Subject not found.');
+  if (subject.class_id !== classId) throw new Error('Subject is not assigned to the selected class.');
+};
+
+const validateExam = (db: any, examId: number) => {
+  const exam = db.prepare('SELECT id FROM exams WHERE id = ?').get(examId);
+  if (!exam) throw new Error('Exam not found.');
+};
+
+const upsertMark = (db: any, req: any, studentId: number, classId: number, subjectId: number, examId: number, numericMarks: number) => {
+  validateEntities(db, studentId, classId, subjectId);
+  const grade = calculateGradeDetails(numericMarks);
+  db.prepare(`
+    INSERT INTO marks (student_id, class_id, subject_id, exam_id, marks, percentage, grade, gpa, entered_by, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(student_id, subject_id, exam_id) DO UPDATE SET
+      class_id = excluded.class_id,
+      marks = excluded.marks,
+      percentage = excluded.percentage,
+      grade = excluded.grade,
+      gpa = excluded.gpa,
+      entered_by = excluded.entered_by,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(studentId, classId, subjectId, examId, numericMarks, grade.percentage, grade.grade, grade.gpa, req.user.id);
+  return grade;
+};
+
 const recalculateStudentResult = (db: any, studentId: number, classId: number, examId: number) => {
   const rows = db.prepare(`
     SELECT percentage, gpa, grade
@@ -243,8 +275,13 @@ export const registerResultModule = ({ app, db, authenticate, logActivity }: Reg
   app.post('/api/subjects', authenticate, (req: any, res) => {
     if (!requireRole(req, res, ['admin'])) return;
     try {
-      const result = db.prepare('INSERT INTO subjects (name, class_id) VALUES (?, ?)').run(req.body.name, Number(req.body.class_id));
-      logActivity(req.user.id, 'Create Subject', `Created subject ${req.body.name}`);
+      const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+      const classId = Number(req.body.class_id);
+      if (!name || !classId) throw new Error('Subject name and class are required.');
+      const classInfo = db.prepare('SELECT id FROM classes WHERE id = ?').get(classId);
+      if (!classInfo) throw new Error('Class not found.');
+      const result = db.prepare('INSERT INTO subjects (name, class_id) VALUES (?, ?)').run(name, classId);
+      logActivity(req.user.id, 'Create Subject', `Created subject ${name}`);
       res.json({ id: result.lastInsertRowid });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -254,8 +291,14 @@ export const registerResultModule = ({ app, db, authenticate, logActivity }: Reg
   app.put('/api/subjects/:id', authenticate, (req: any, res) => {
     if (!requireRole(req, res, ['admin'])) return;
     try {
-      db.prepare('UPDATE subjects SET name = ?, class_id = ? WHERE id = ?').run(req.body.name, Number(req.body.class_id), Number(req.params.id));
-      logActivity(req.user.id, 'Update Subject', `Updated subject ${req.body.name}`);
+      const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
+      const classId = Number(req.body.class_id);
+      if (!name || !classId) throw new Error('Subject name and class are required.');
+      const classInfo = db.prepare('SELECT id FROM classes WHERE id = ?').get(classId);
+      if (!classInfo) throw new Error('Class not found.');
+      const result = db.prepare('UPDATE subjects SET name = ?, class_id = ? WHERE id = ?').run(name, classId, Number(req.params.id));
+      if (result.changes === 0) return res.status(404).json({ error: 'Subject not found.' });
+      logActivity(req.user.id, 'Update Subject', `Updated subject ${name}`);
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -290,6 +333,8 @@ export const registerResultModule = ({ app, db, authenticate, logActivity }: Reg
     }
 
     try {
+      validateClassAndSubject(db, classId, subjectId);
+      validateExam(db, examId);
       const payload = buildClassResults(db, classId, examId);
       res.json({
         ...payload,
@@ -314,28 +359,22 @@ export const registerResultModule = ({ app, db, authenticate, logActivity }: Reg
     const examId = Number(req.body.exam_id);
     const numericMarks = Number(req.body.marks);
 
+    if (!studentId || !classId || !subjectId || !examId) {
+      res.status(400).json({ error: 'student_id, class_id, subject_id and exam_id are required.' });
+      return;
+    }
+
     if (Number.isNaN(numericMarks) || numericMarks < 0 || numericMarks > 100) {
       res.status(400).json({ error: 'Marks must be between 0 and 100.' });
       return;
     }
 
     try {
-      validateEntities(db, studentId, classId, subjectId);
-      const grade = calculateGradeDetails(numericMarks);
+      validateExam(db, examId);
+      let grade: any = null;
       const transaction = db.transaction(() => {
         assertDraft(db, classId, examId);
-        db.prepare(`
-          INSERT INTO marks (student_id, class_id, subject_id, exam_id, marks, percentage, grade, gpa, entered_by, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-          ON CONFLICT(student_id, subject_id, exam_id) DO UPDATE SET
-            class_id = excluded.class_id,
-            marks = excluded.marks,
-            percentage = excluded.percentage,
-            grade = excluded.grade,
-            gpa = excluded.gpa,
-            entered_by = excluded.entered_by,
-            updated_at = CURRENT_TIMESTAMP
-        `).run(studentId, classId, subjectId, examId, numericMarks, grade.percentage, grade.grade, grade.gpa, req.user.id);
+        grade = upsertMark(db, req, studentId, classId, subjectId, examId, numericMarks);
         recalculateStudentResult(db, studentId, classId, examId);
       });
       transaction();
@@ -346,10 +385,59 @@ export const registerResultModule = ({ app, db, authenticate, logActivity }: Reg
     }
   });
 
+  app.post('/api/marks/bulk', authenticate, (req: any, res) => {
+    if (!requireRole(req, res, ['admin', 'teacher'])) return;
+    const classId = Number(req.body.class_id);
+    const subjectId = Number(req.body.subject_id);
+    const examId = Number(req.body.exam_id);
+    const marks = Array.isArray(req.body.marks) ? req.body.marks : [];
+
+    if (!classId || !subjectId || !examId || marks.length === 0) {
+      res.status(400).json({ error: 'class_id, subject_id, exam_id and marks are required.' });
+      return;
+    }
+
+    try {
+      validateClassAndSubject(db, classId, subjectId);
+      validateExam(db, examId);
+
+      const normalized = marks.map((item: any) => {
+        const studentId = Number(item.student_id);
+        const numericMarks = Number(item.marks);
+        if (!studentId) throw new Error('Each mark entry must include a valid student_id.');
+        if (Number.isNaN(numericMarks) || numericMarks < 0 || numericMarks > 100) {
+          throw new Error('All marks must be between 0 and 100.');
+        }
+        return { studentId, numericMarks };
+      });
+
+      const grades: Record<number, any> = {};
+      const transaction = db.transaction(() => {
+        assertDraft(db, classId, examId);
+        normalized.forEach((item) => {
+          grades[item.studentId] = upsertMark(db, req, item.studentId, classId, subjectId, examId, item.numericMarks);
+        });
+
+        const impactedStudents: number[] = Array.from(new Set(normalized.map((item) => item.studentId)));
+        impactedStudents.forEach((studentId) => recalculateStudentResult(db, studentId, classId, examId));
+      });
+
+      transaction();
+      logActivity(req.user.id, 'Bulk Save Marks', `Saved ${normalized.length} marks for subject ${subjectId}, exam ${examId}`);
+      res.json({ success: true, count: normalized.length, grades });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   app.get('/api/results/class-view', authenticate, (req: any, res) => {
     if (!requireRole(req, res, ['admin', 'teacher'])) return;
     try {
-      res.json(buildClassResults(db, Number(req.query.class_id), Number(req.query.exam_id)));
+      const classId = Number(req.query.class_id);
+      const examId = Number(req.query.exam_id);
+      if (!classId || !examId) throw new Error('class_id and exam_id are required.');
+      validateExam(db, examId);
+      res.json(buildClassResults(db, classId, examId));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -360,24 +448,30 @@ export const registerResultModule = ({ app, db, authenticate, logActivity }: Reg
     const classId = Number(req.query.class_id);
     const subjectId = Number(req.query.subject_id);
     const examId = Number(req.query.exam_id);
-    const rows = db.prepare(`
-      SELECT u.name AS student_name, u.student_id AS student_identifier, m.marks, m.percentage, m.grade, m.gpa
-      FROM marks m
-      JOIN users u ON u.id = m.student_id
-      WHERE m.class_id = ? AND m.subject_id = ? AND m.exam_id = ?
-      ORDER BY m.marks DESC, u.name
-    `).all(classId, subjectId, examId) as any[];
+    try {
+      validateClassAndSubject(db, classId, subjectId);
+      validateExam(db, examId);
+      const rows = db.prepare(`
+        SELECT u.name AS student_name, u.student_id AS student_identifier, m.marks, m.percentage, m.grade, m.gpa
+        FROM marks m
+        JOIN users u ON u.id = m.student_id
+        WHERE m.class_id = ? AND m.subject_id = ? AND m.exam_id = ?
+        ORDER BY m.marks DESC, u.name
+      `).all(classId, subjectId, examId) as any[];
 
-    res.json({
-      summary: {
-        entries: rows.length,
-        average: average(rows.map((item) => item.marks)),
-        highest: rows.length ? rows[0].marks : 0,
-        lowest: rows.length ? rows[rows.length - 1].marks : 0,
-        passRate: rows.length ? average([rows.filter((item) => item.grade !== 'F').length / rows.length * 100]) : 0,
-      },
-      rows,
-    });
+      res.json({
+        summary: {
+          entries: rows.length,
+          average: average(rows.map((item) => item.marks)),
+          highest: rows.length ? rows[0].marks : 0,
+          lowest: rows.length ? rows[rows.length - 1].marks : 0,
+          passRate: rows.length ? average([rows.filter((item) => item.grade !== 'F').length / rows.length * 100]) : 0,
+        },
+        rows,
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   app.put('/api/results/publication', authenticate, (req: any, res) => {

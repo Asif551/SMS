@@ -55,11 +55,13 @@ db.exec(`
     student_id INTEGER,
     class_id INTEGER,
     period_id INTEGER,
+    subject_id INTEGER,
     date TEXT NOT NULL,
     status TEXT NOT NULL,
     FOREIGN KEY(student_id) REFERENCES users(id),
     FOREIGN KEY(class_id) REFERENCES classes(id),
-    FOREIGN KEY(period_id) REFERENCES periods(id)
+    FOREIGN KEY(period_id) REFERENCES periods(id),
+    FOREIGN KEY(subject_id) REFERENCES subjects(id)
   );
 
   CREATE TABLE IF NOT EXISTS fee_structures (
@@ -128,6 +130,27 @@ try {
 } catch (e) {
   // Columns likely already exist
 }
+
+try {
+  db.exec('ALTER TABLE attendance ADD COLUMN subject_id INTEGER');
+} catch (e) {
+  // Column likely already exists
+}
+
+const requireRole = (req: any, res: any, roles: string[]) => {
+  if (!roles.includes(req.user.role)) {
+    res.sendStatus(403);
+    return false;
+  }
+  return true;
+};
+
+const validateRequiredString = (value: unknown, label: string) => {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${label} is required.`);
+  }
+  return value.trim();
+};
 
 // Helper to log activities
 const logActivity = (user_id: number | null, action: string, details: string) => {
@@ -390,46 +413,100 @@ app.get('/api/classes', authenticate, (req: any, res) => {
 });
 
 app.post('/api/classes', authenticate, (req: any, res) => {
-  if (req.user.role !== 'admin') return res.sendStatus(403);
+  if (!requireRole(req, res, ['admin'])) return;
   try {
-    const result = db.prepare('INSERT INTO classes (name) VALUES (?)').run(req.body.name);
+    const name = validateRequiredString(req.body.name, 'Class name');
+    const result = db.prepare('INSERT INTO classes (name) VALUES (?)').run(name);
+    logActivity(req.user.id, 'Create Class', `Created class ${name}`);
     res.json({ id: result.lastInsertRowid });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.get('/api/periods', authenticate, (req: any, res) => {
-  const periods = db.prepare('SELECT * FROM periods').all();
-  res.json(periods);
+app.put('/api/classes/:id', authenticate, (req: any, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  try {
+    const classId = Number(req.params.id);
+    const name = validateRequiredString(req.body.name, 'Class name');
+    const result = db.prepare('UPDATE classes SET name = ? WHERE id = ?').run(name, classId);
+    if (result.changes === 0) return res.status(404).json({ error: 'Class not found.' });
+    logActivity(req.user.id, 'Update Class', `Updated class ${name}`);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/classes/:id', authenticate, (req: any, res) => {
+  if (!requireRole(req, res, ['admin'])) return;
+  const classId = Number(req.params.id);
+  try {
+    const classInfo = db.prepare('SELECT name FROM classes WHERE id = ?').get(classId) as any;
+    if (!classInfo) return res.status(404).json({ error: 'Class not found.' });
+
+    const studentCount = (db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'student' AND class_id = ?").get(classId) as any).count;
+    if (studentCount > 0) {
+      return res.status(400).json({ error: 'Move or remove students from this class before deleting it.' });
+    }
+
+    const transaction = db.transaction(() => {
+      db.prepare('DELETE FROM attendance WHERE class_id = ?').run(classId);
+      db.prepare('DELETE FROM admit_cards WHERE class_id = ?').run(classId);
+      db.prepare('DELETE FROM fee_structures WHERE class_id = ?').run(classId);
+      db.prepare('DELETE FROM marks WHERE class_id = ?').run(classId);
+      db.prepare('DELETE FROM results WHERE class_id = ?').run(classId);
+      db.prepare('DELETE FROM result_publications WHERE class_id = ?').run(classId);
+      db.prepare('DELETE FROM subjects WHERE class_id = ?').run(classId);
+      db.prepare('DELETE FROM classes WHERE id = ?').run(classId);
+    });
+
+    transaction();
+    logActivity(req.user.id, 'Delete Class', `Deleted class ${classInfo.name}`);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // --- Teacher Routes ---
 app.get('/api/students/class/:classId', authenticate, (req: any, res) => {
+  if (!requireRole(req, res, ['admin', 'teacher'])) return;
   const students = db.prepare("SELECT id, name, student_id FROM users WHERE role = 'student' AND class_id = ?").all(Number(req.params.classId));
   res.json(students);
 });
 
 app.post('/api/attendance', authenticate, (req: any, res) => {
-  if (req.user.role !== 'teacher' && req.user.role !== 'admin') return res.sendStatus(403);
-  const { class_id, period_id, date, records } = req.body; // records: [{student_id, status}]
+  if (!requireRole(req, res, ['admin', 'teacher'])) return;
+  const { class_id, subject_id, date, records } = req.body; // records: [{student_id, status}]
   
   const cId = Number(class_id);
-  const pId = Number(period_id);
+  const subjectId = Number(subject_id);
+  if (!cId || !subjectId || typeof date !== 'string' || !date || !Array.isArray(records)) {
+    return res.status(400).json({ error: 'class_id, subject_id, date, and records are required.' });
+  }
+
+  const subject = db.prepare('SELECT id FROM subjects WHERE id = ? AND class_id = ?').get(subjectId, cId);
+  if (!subject) {
+    return res.status(400).json({ error: 'Subject is not assigned to the selected class.' });
+  }
   
-  const insert = db.prepare('INSERT INTO attendance (student_id, class_id, period_id, date, status) VALUES (?, ?, ?, ?, ?)');
-  const update = db.prepare('UPDATE attendance SET status = ? WHERE student_id = ? AND class_id = ? AND period_id = ? AND date = ?');
+  const insert = db.prepare('INSERT INTO attendance (student_id, class_id, subject_id, date, status) VALUES (?, ?, ?, ?, ?)');
+  const update = db.prepare('UPDATE attendance SET status = ? WHERE student_id = ? AND class_id = ? AND subject_id = ? AND date = ?');
   
-  const check = db.prepare('SELECT id FROM attendance WHERE student_id = ? AND class_id = ? AND period_id = ? AND date = ?');
+  const check = db.prepare('SELECT id FROM attendance WHERE student_id = ? AND class_id = ? AND subject_id = ? AND date = ?');
+  const validateStudent = db.prepare("SELECT id FROM users WHERE id = ? AND role = 'student' AND class_id = ?");
 
   const transaction = db.transaction((recs) => {
     for (const rec of recs) {
       const sId = Number(rec.student_id);
-      const existing = check.get(sId, cId, pId, date);
+      if (!validateStudent.get(sId, cId)) throw new Error('Attendance contains a student outside the selected class.');
+      if (!['Present', 'Absent'].includes(rec.status)) throw new Error('Attendance status must be Present or Absent.');
+      const existing = check.get(sId, cId, subjectId, date);
       if (existing) {
-        update.run(rec.status, sId, cId, pId, date);
+        update.run(rec.status, sId, cId, subjectId, date);
       } else {
-        insert.run(sId, cId, pId, date, rec.status);
+        insert.run(sId, cId, subjectId, date, rec.status);
       }
     }
   });
@@ -443,11 +520,12 @@ app.post('/api/attendance', authenticate, (req: any, res) => {
 });
 
 app.get('/api/attendance/summary', authenticate, (req: any, res) => {
+  if (!requireRole(req, res, ['admin', 'teacher'])) return;
   const { class_id } = req.query;
   let query = `
     SELECT u.id, u.name, u.student_id,
-           SUM(CASE WHEN a.status = 'Present' THEN 1 ELSE 0 END) as present_count,
-           SUM(CASE WHEN a.status = 'Absent' THEN 1 ELSE 0 END) as absent_count,
+           COALESCE(SUM(CASE WHEN a.status = 'Present' THEN 1 ELSE 0 END), 0) as present_count,
+           COALESCE(SUM(CASE WHEN a.status = 'Absent' THEN 1 ELSE 0 END), 0) as absent_count,
            COUNT(a.id) as total_days
     FROM users u
     LEFT JOIN attendance a ON u.id = a.student_id
@@ -465,7 +543,14 @@ app.get('/api/attendance/summary', authenticate, (req: any, res) => {
 });
 
 app.get('/api/attendance/history/:studentId', authenticate, (req: any, res) => {
-  const history = db.prepare('SELECT a.*, p.name as period_name FROM attendance a JOIN periods p ON a.period_id = p.id WHERE a.student_id = ? ORDER BY a.date DESC').all(Number(req.params.studentId));
+  if (!requireRole(req, res, ['admin', 'teacher'])) return;
+  const history = db.prepare(`
+    SELECT a.*, s.name as subject_name
+    FROM attendance a
+    JOIN subjects s ON a.subject_id = s.id
+    WHERE a.student_id = ?
+    ORDER BY a.date DESC, s.name
+  `).all(Number(req.params.studentId));
   res.json(history);
 });
 
@@ -595,7 +680,13 @@ app.get('/api/student/fees', authenticate, (req: any, res) => {
 
 app.get('/api/student/attendance', authenticate, (req: any, res) => {
   if (req.user.role !== 'student') return res.sendStatus(403);
-  const history = db.prepare('SELECT a.*, p.name as period_name FROM attendance a JOIN periods p ON a.period_id = p.id WHERE a.student_id = ? ORDER BY a.date DESC').all(req.user.id);
+  const history = db.prepare(`
+    SELECT a.*, s.name as subject_name
+    FROM attendance a
+    JOIN subjects s ON a.subject_id = s.id
+    WHERE a.student_id = ?
+    ORDER BY a.date DESC, s.name
+  `).all(req.user.id);
   res.json(history);
 });
 
