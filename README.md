@@ -2,7 +2,6 @@
 <html>
 <head>
 <meta charset="UTF-8" />
-<title>SMS – School Management System</title>
 </head>
 <body style="font-family: Arial, sans-serif; line-height: 1.6;">
 
