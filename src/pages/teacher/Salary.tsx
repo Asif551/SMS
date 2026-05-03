@@ -41,6 +41,10 @@ export default function Salary() {
               <span className="text-green-700">Total Received</span>
               <span className="font-bold text-green-700">${salaryInfo.total_paid.toFixed(2)}</span>
             </div>
+            <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg">
+              <span className="text-red-700">Pending Amount</span>
+              <span className="font-bold text-red-700">${(salaryInfo.monthly_salary - salaryInfo.total_paid).toFixed(2)}</span>
+            </div>
           </div>
         ) : (
           <p className="text-gray-500">No salary structure assigned.</p>
