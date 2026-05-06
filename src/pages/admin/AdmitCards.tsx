@@ -13,6 +13,18 @@ export default function AdmitCards() {
   
   const [isExamModalOpen, setIsExamModalOpen] = useState(false);
   const [examForm, setExamForm] = useState({ name: '', date: '' });
+  const [schoolName, setSchoolName] = useState('EduManage');
+
+  useEffect(() => {
+      fetch('/api/settings')
+        .then(res => res.json())
+        .then(data => {
+          if (data.school_name) {
+            setSchoolName(data.school_name);
+          }
+        })
+        .catch(err => console.error(err));
+    }, []);
 
   useEffect(() => {
     fetchClasses();
@@ -81,7 +93,7 @@ export default function AdmitCards() {
         // Header
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
-        doc.text('EDUMANAGE SCHOOL', x + cardWidth / 2, y + 8, { align: 'center' });
+        doc.text(`${schoolName}`, x + cardWidth / 2, y + 8, { align: 'center' });
         
         doc.setFontSize(10);
         doc.text('ADMIT CARD', x + cardWidth / 2, y + 14, { align: 'center' });
