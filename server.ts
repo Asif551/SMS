@@ -631,6 +631,43 @@ app.post('/api/transactions', authenticate, (req: any, res) => {
   }
 });
 
+app.put('/api/transactions/:id', authenticate, (req: any, res) => {
+  if (req.user.role !== 'accountant' && req.user.role !== 'admin') {
+    return res.sendStatus(403);
+  }
+
+  const { id } = req.params;
+  const { type, user_id, amount, description } = req.body;
+
+  try {
+    const result = db.prepare(`
+      UPDATE transactions
+      SET
+        type = ?,
+        user_id = ?,
+        amount = ?,
+        description = ?
+      WHERE id = ?
+    `).run(
+      type,
+      user_id ? Number(user_id) : null,
+      Number(amount),
+      description,
+      Number(id)
+    );
+
+    res.json({
+      success: true,
+      changes: result.changes
+    });
+
+  } catch (err: any) {
+    res.status(400).json({
+      error: err.message
+    });
+  }
+});
+
 app.get('/api/fees/dues', authenticate, (req: any, res) => {
   if (req.user.role !== 'accountant' && req.user.role !== 'admin') return res.sendStatus(403);
   // Simple dues calculation: assuming 1 fee per month, total dues = fee_structure * months_passed - total_paid
