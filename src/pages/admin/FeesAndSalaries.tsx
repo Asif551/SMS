@@ -12,6 +12,9 @@ export default function FeesAndSalaries() {
   const [feeForm, setFeeForm] = useState({ class_id: '', amount: '' });
   const [salaryForm, setSalaryForm] = useState({ user_id: '', amount: '' });
 
+  const [SalaryAmountError, setSalaryAmountError] = useState(false);
+  const [FeeAmountError, setFeeAmountError] = useState(false);
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -78,11 +81,22 @@ export default function FeesAndSalaries() {
               <option value="">Select Class</option>
               {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <input 
-              type="number" placeholder="Amount ($)" required step="0.01"
-              className="w-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
-              value={feeForm.amount} onChange={(e) => setFeeForm({...feeForm, amount: e.target.value})}
-            />
+            <div className = "flex flex-col">
+              <input 
+                type="number" placeholder="Amount ($)" required step="0.01" min="1"
+                className={`w-32 rounded-md border shadow-sm sm:text-sm p-2
+                  ${FeeAmountError 
+                    ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                    : "border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
+                  }`}
+                value={feeForm.amount} onChange={(e) => {
+                  const value = e.target.value;
+                  setFeeForm({...feeForm, amount: e.target.value})
+                  setFeeAmountError(value === '' || Number(value) <= 0);
+              }}
+              />
+              {FeeAmountError && ( <p className="text-red-500 text-xs mt-1">Please enter a valid amount</p> )}
+            </div>
             <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-indigo-700">
               <Save size={18} />
             </button>
@@ -121,11 +135,22 @@ export default function FeesAndSalaries() {
               <option value="">Select Staff</option>
               {staff.map(s => <option key={s.id} value={s.id}>{s.name} ({s.role})</option>)}
             </select>
-            <input 
-              type="number" placeholder="Amount ($)" required step="0.01"
-              className="w-32 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
-              value={salaryForm.amount} onChange={(e) => setSalaryForm({...salaryForm, amount: e.target.value})}
-            />
+            <div className = "flex flex-col">
+              <input 
+                type="number" placeholder="Amount ($)" required step="0.01" min="1"
+                className={`w-32 rounded-md border shadow-sm sm:text-sm p-2
+                  ${SalaryAmountError 
+                    ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                    : "border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
+                  }`}
+                value={salaryForm.amount} onChange={(e) => {
+                    const value = e.target.value;
+                    setSalaryForm({...salaryForm, amount: value});
+                    setSalaryAmountError(value === '' || Number(value) <= 0);
+                }}
+              />
+              {SalaryAmountError && ( <p className="text-red-500 text-xs mt-1">Please enter a valid amount</p> )}
+            </div>
             <button type="submit" className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-indigo-700">
               <Save size={18} />
             </button>
