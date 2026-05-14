@@ -12,6 +12,7 @@ export default function Finance() {
   const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
   const [view, setView] = useState<'transactions' | 'dues' | 'user_report'>('transactions');
   const [searchUserId, setSearchUserId] = useState<string>('');
+  const [amountError, setAmountError] = useState(false);
   
   const [formData, setFormData] = useState({
     type: 'income',
@@ -43,6 +44,18 @@ export default function Finance() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const amountValue = Number(formData.amount);
+    if (isNaN(amountValue) || amountValue < 1) {
+      alert('Please enter a valid amount.');
+      return;
+    }
+
+    if (!formData.description.trim()) {
+      alert('Description cannot be empty.');
+      return;
+    }
+
     const res = await fetch('/api/transactions', {
       method: 'POST',
       headers: { 
@@ -401,11 +414,17 @@ export default function Finance() {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Amount ($)</label>
                 <input 
-                  type="number" step="0.01" required
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
+                  type="number" step="0.01" min="1" required
+                  className= {`mt-1 block w-full rounded-md shadow-sm sm:text-sm p-2 border 
+                  ${amountError ? "border-red-500 focus:border-red-500 focus:ring-red-500" : "border-gray-300  focus:border-indigo-500 focus:ring-indigo-500"}`}
                   value={formData.amount}
-                  onChange={(e) => setFormData({...formData, amount: e.target.value})}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setFormData({...formData, amount: e.target.value});
+                    setAmountError(!value || Number(value) < 1);
+                    }}
                 />
+                {amountError && <p className="text-red-500 text-sm mt-1">Amount must be a greater or equal to 1.</p>}
               </div>
 
               <div>
