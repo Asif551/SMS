@@ -5,6 +5,7 @@ import {
   LayoutDashboard, Users, BookOpen, DollarSign, 
   FileText, LogOut, Menu, X, Settings
 } from 'lucide-react';
+import HelpModal from './HelpModal.tsx';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -12,6 +13,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [schoolName, setSchoolName] = useState('EduManage');
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     fetch('/api/settings')
@@ -22,6 +24,20 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         }
       })
       .catch(err => console.error(err));
+
+    // F1 Help Shortcut
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setShowHelp(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, []);
 
   const handleLogout = () => {
@@ -98,6 +114,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <main className="flex-1 overflow-y-auto bg-gray-50 p-6">
           {children}
         </main>
+        <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
       </div>
     </div>
   );
